@@ -88,6 +88,7 @@ def train_region(region: str, epochs: int = 300, lr: float = 0.01):
         "seq_len": SEQ_LEN,
         "monthly_means": monthly_means,
         "last_window": values[-SEQ_LEN:],   # most recent 12 months, raw mm
+        "last_month": history[-1]["month"], # which calendar month the model's raw output is "native" to
         "num_records": len(history),
         "hidden_size": 32,
     }

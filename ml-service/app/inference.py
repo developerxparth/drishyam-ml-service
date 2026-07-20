@@ -95,15 +95,25 @@ def predict(region: str, month: str):
 
     model, meta = entry["model"], entry["meta"]
     window = meta["last_window"]
-    predicted = _run_model(model, window, meta["min"], meta["max"])
-    predicted = max(0.0, predicted)
+    raw_predicted = max(0.0, _run_model(model, window, meta["min"], meta["max"]))
+
+    # The model's raw output is a one-step-ahead prediction "native" to
+    # whatever month follows its training window (meta["last_month"]),
+    # not necessarily the month actually requested. Convert it into a
+    # trend ratio against that native month, then apply the same ratio
+    # to the requested month's historical mean — this keeps the LSTM's
+    # genuine learned signal while reporting a seasonally sensible number.
+    native_month = meta.get("last_month")
+    native_hist_mean = meta["monthly_means"].get(native_month) if native_month else None
+    trend_ratio = (raw_predicted / native_hist_mean) if native_hist_mean else 1.0
+    trend_ratio = max(0.4, min(trend_ratio, 2.5))  # keep the ratio within a sane range
 
     hist_mean = meta["monthly_means"].get(month)
     if hist_mean is None:
-        # fall back to live Mongo lookup in case meta predates new data
         history = get_region_history(region)
-        hist_mean = historical_mean_for_month(history, month) or predicted
+        hist_mean = historical_mean_for_month(history, month) or raw_predicted
 
+    predicted = max(0.0, hist_mean * trend_ratio)
     anomaly_pct = round(((predicted - hist_mean) / hist_mean) * 100) if hist_mean else 0
 
     return {
@@ -112,7 +122,6 @@ def predict(region: str, month: str):
         "historical_mean_mm": round(hist_mean),
         "anomaly_pct": anomaly_pct,
     }
-
 
 def run_scenario(region: str, rainfall_delta: float, temp_delta: float):
     """
@@ -136,7 +145,15 @@ def run_scenario(region: str, rainfall_delta: float, temp_delta: float):
     rainfall_factor = 1 + (rainfall_delta / 100)
     scaled_window = [v * rainfall_factor for v in window]
 
-    predicted = _run_model(model, scaled_window, meta["min"], meta["max"])
+    raw_predicted = max(0.0, _run_model(model, scaled_window, meta["min"], meta["max"]))
+
+    native_month = meta.get("last_month")
+    native_hist_mean = meta["monthly_means"].get(native_month) if native_month else None
+    trend_ratio = (raw_predicted / native_hist_mean) if native_hist_mean else 1.0
+    trend_ratio = max(0.4, min(trend_ratio, 2.5))
+
+    hist_mean = meta["monthly_means"].get(month, raw_predicted)
+    predicted = max(0.0, hist_mean * trend_ratio)
 
     # Temperature effect: not a model input, applied as a physically
     # motivated multiplier (higher temp -> more evapotranspiration ->
@@ -144,7 +161,6 @@ def run_scenario(region: str, rainfall_delta: float, temp_delta: float):
     temp_penalty = 1 - max(0, temp_delta) * 0.025
     predicted = max(0.0, predicted * temp_penalty)
 
-    hist_mean = meta["monthly_means"].get(month, predicted)
     anomaly_pct = round(((predicted - hist_mean) / hist_mean) * 100) if hist_mean else 0
 
     return {
