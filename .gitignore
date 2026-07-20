@@ -1,0 +1,8 @@
+data-pipeline/venv
+ml-service/venv
+data-pipeline/.env
+ml-service/.env
+data-pipeline/__pycache__
+ml-service/__pycache__
+data-pipeline/imd_raw
+data-pipeline/*.csv
